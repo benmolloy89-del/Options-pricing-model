@@ -1,0 +1,133 @@
+from datetime import date
+import math
+
+
+def norm_cdf(x):
+    """Standard normal cumulative distribution function N(x) using math.erf."""
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def norm_pdf(x):
+    """Standard normal probability density function n(x)."""
+    return math.exp(-0.5 * x**2) / math.sqrt(2.0 * math.pi)
+
+
+def black_scholes_pure(S, K, T, r, sigma, option_type="call"):
+    if T <= 0:
+        if option_type == "call":
+            return {"price": max(0.0, S - K), "delta": 1.0 if S > K else 0.0}
+        else:
+            return {"price": max(0.0, K - S), "delta": -1.0 if K > S else 0.0}
+
+    d1 = (math.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
+    d2 = d1 - sigma * math.sqrt(T)
+
+    if option_type.lower() == "call":
+        price = S * norm_cdf(d1) - K * math.exp(-r * T) * norm_cdf(d2)
+        delta = norm_cdf(d1)
+        rho = K * T * math.exp(-r * T) * norm_cdf(d2) / 100.0
+    elif option_type.lower() == "put":
+        price = K * math.exp(-r * T) * norm_cdf(-d2) - S * norm_cdf(-d1)
+        delta = norm_cdf(d1) - 1.0
+        rho = -K * T * math.exp(-r * T) * norm_cdf(-d2) / 100.0
+    else:
+        raise ValueError("option_type must be 'call' or 'put'")
+
+    gamma = norm_pdf(d1) / (S * sigma * math.sqrt(T))
+    vega = (S * norm_pdf(d1) * math.sqrt(T)) / 100.0
+
+    if option_type.lower() == "call":
+        theta = (
+            -(S * norm_pdf(d1) * sigma) / (2 * math.sqrt(T))
+            - r * K * math.exp(-r * T) * norm_cdf(d2)
+        ) / 365.0
+    else:
+        theta = (
+            -(S * norm_pdf(d1) * sigma) / (2 * math.sqrt(T))
+            + r * K * math.exp(-r * T) * norm_cdf(-d2)
+        ) / 365.0
+
+    return {
+        "price": price,
+        "delta": delta,
+        "gamma": gamma,
+        "vega": vega,
+        "theta": theta,
+        "rho": rho,
+    }
+
+
+def draw_terminal_chart(
+    price_range, call_prices, put_prices, spot_price, strike_price
+):
+    """Generates an ASCII chart showing option prices across stock prices."""
+    max_val = max(max(call_prices), max(put_prices))
+    bar_width = 30  # Max character width for bars
+
+    print("\n" + "=" * 62)
+    print(f"{'OPTION PRICE CHART ACROSS QQQ STOCK PRICES':^62}")
+    print("=" * 62)
+    print(f"Legend: [C] = Call Price  |  [P] = Put Price")
+    print("-" * 62)
+
+    for stock_price, c_price, p_price in zip(
+        price_range, call_prices, put_prices
+    ):
+        c_bars = int((c_price / max_val) * bar_width) if max_val > 0 else 0
+        p_bars = int((p_price / max_val) * bar_width) if max_val > 0 else 0
+
+        c_visual = "█" * c_bars
+        p_visual = "░" * p_bars
+
+        # Highlight current spot price and strike price
+        tag = ""
+        if abs(stock_price - spot_price) < 5:
+            tag = " <-- Current Spot"
+        elif abs(stock_price - strike_price) < 0.1:
+            tag = " <-- Strike ($700)"
+
+        print(f"QQQ ${stock_price:3.0f} | Call ${c_price:5.2f} {c_visual:<30}")
+        print(f"         | Put  ${p_price:5.2f} {p_visual:<30}{tag}")
+        print("-" * 62)
+
+
+# --- SETUP FOR QQQ $700 AUG 21 2026 ---
+if __name__ == "__main__":
+    expiry_date = date(2026, 8, 21)
+    today = date(2026, 7, 20)
+
+    days_to_expiry = (expiry_date - today).days
+    T = days_to_expiry / 365.0
+
+    S = 695.33  # Spot price
+    K = 700.00  # Strike price
+    r = 0.0455  # Risk-free rate (4.55%)
+    sigma = 0.2617  # Implied Volatility (26.17%)
+
+    # Single price calculation
+    call = black_scholes_pure(S, K, T, r, sigma, "call")
+    put = black_scholes_pure(S, K, T, r, sigma, "put")
+
+    print(
+        f"=== QQQ ${K:.0f} Option | Expiry: Aug 21, 2026 ({days_to_expiry} Days) ==="
+    )
+    print(f"{'Metric':<15} | {'CALL':<10} | {'PUT':<10}")
+    print("-" * 40)
+    print(f"{'Price ($)':<15} | ${call['price']:<9.2f} | ${put['price']:<9.2f}")
+    print(f"{'Delta':<15} | {call['delta']:<10.4f} | {put['delta']:<10.4f}")
+    print(f"{'Gamma':<15} | {call['gamma']:<10.4f} | {call['gamma']:<10.4f}")
+    print(f"{'Vega ($/1% IV)':<15} | ${call['vega']:<9.4f} | ${call['vega']:<9.4f}")
+    print(f"{'Theta ($/day)':<15} | ${call['theta']:<9.4f} | ${put['theta']:<9.4f}")
+
+    # Generate Chart over a range of QQQ prices ($650 to $750)
+    stock_prices = [650, 670, 690, 695, 700, 710, 730, 750]
+    call_prices = [
+        black_scholes_pure(s, K, T, r, sigma, "call")["price"]
+        for s in stock_prices
+    ]
+    put_prices = [
+        black_scholes_pure(s, K, T, r, sigma, "put")["price"]
+        for s in stock_prices
+    ]
+
+    draw_terminal_chart(stock_prices, call_prices, put_prices, S, K)
